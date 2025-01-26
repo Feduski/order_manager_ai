@@ -6,6 +6,7 @@ from backend.models import Prenda, Order
 from backend.schemas import OrderCreate, OrderResponse, InventoryUpdate
 import logging, openai, json, os
 from dotenv import load_dotenv
+from fastapi.requests import Request
 
 
 app = FastAPI()
@@ -33,8 +34,9 @@ def parse_user_message(message: str) -> dict:
                     "content": """
                         Eres un asistente que interpreta comandos para gestionar pedidos y stock. 
                         Devuelve un JSON válido con las siguientes claves:
-                        - "intent": "crear_pedido", "consultar_stock", o "desconocido".
+                        - "intent": "crear_pedido", "consultar_stock", "consultar_pedidos", "pedido_por_id" o "desconocido".
                         - "product_id": número (solo si aplica).
+                        - "order_id": número (solo si aplica).
                         - "quantity": número (solo si aplica).
                         
                         Ejemplos:
@@ -43,6 +45,12 @@ def parse_user_message(message: str) -> dict:
                         
                         - Mensaje: "Consultar stock de id 90"
                         Respuesta: {"intent": "consultar_stock", "product_id": 90}
+
+                        - Mensaje: "Mostrame todos los pedidos"
+                        Respuesta: {"intent": "consultar_pedidos"}
+
+                        - Mensaje: "Mostrame el pedido con id 1"
+                        Respuesta: {"intent": "pedido_por_id", "order_id": 1}
                     """
                 },
                 {"role": "user", "content": message}
@@ -65,6 +73,13 @@ def parse_user_message(message: str) -> dict:
         logging.error(f"Error al parsear mensaje: {e}")
         return {"intent": "desconocido"}
     
+@app.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    data = await request.json()
+    mensaje = data.get("body", {}).get("message", "")
+    respuesta = parse_user_message(mensaje)
+    return {"respuesta": respuesta}
+
 @app.post("/chat")
 def chat_with_agent(message: str, db: Session = Depends(get_db)):
     parsed_data = parse_user_message(message)#recibir mensaje del user
@@ -100,6 +115,18 @@ def chat_with_agent(message: str, db: Session = Depends(get_db)):
             return {"error": f"Producto {product_id} no encontrado"}
         
         return {"action": "stock_consultado", "stock": prenda.cantidad_disponible}
+
+    elif parsed_data["intent"] == "consultar_pedidos":
+        orders = get_orders(db)
+        return {"action": "pedidos_totales", "orders": orders}
+
+    elif parsed_data["intent"] == "pedido_por_id":
+        order_id = parsed_data.get("order_id")
+        if not order_id:
+            return {"error": "Falta order_id"}
+        
+        order = get_order_by_id(order_id, db)
+        return {"action": "pedido_consultado", "order": order}
     
     else:
         return {"intent": parsed_data["intent"], "parsed_data": parsed_data}
@@ -132,8 +159,8 @@ def create_order(order: OrderCreate, db: Session = Depends(get_db)):
     print(f"Created order: {db_order}")  
     return db_order
 
-@app.put("/orders/{order_id}", response_model=OrderResponse)
-def update_order(order_id: int, db: Session = Depends(get_db)):
+@app.get("/orders/{order_id}", response_model=OrderResponse)
+def get_order_by_id(order_id: int, db: Session = Depends(get_db)):
     db_order = db.query(Order).filter(Order.order_id == order_id).first()
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
