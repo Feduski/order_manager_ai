@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine, Base
+from backend.database import SessionLocal, engine, Base
 from typing import List, Optional
-from models import Prenda, Order
-from schemas import OrderCreate, OrderResponse, InventoryUpdate
+from backend.models import Prenda, Order
+from backend.schemas import OrderCreate, OrderResponse, InventoryUpdate
 import logging, openai, json, os
 from dotenv import load_dotenv
 

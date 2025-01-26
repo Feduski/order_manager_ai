@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, JSON
-from database import Base
+from backend.database import Base
 
 class Prenda(Base):
     __tablename__ = "prendas"
