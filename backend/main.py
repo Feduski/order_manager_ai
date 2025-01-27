@@ -5,9 +5,18 @@ from typing import List, Optional
 from backend.models import Prenda, Order
 from backend.schemas import OrderCreate, OrderResponse, InventoryUpdate
 import logging, openai, json, os
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 Base.metadata.create_all(bind=engine)
@@ -123,6 +132,14 @@ def parse_response_for_user(info: str) -> dict:
     ]
     )
     return response.choices[0].message.content.strip()
+
+@app.get("/")
+async def read_root():
+    return {"message": "Root de la API"}
+
+@app.get("/docs")
+async def docs():
+    return {"docs": "Endpoint de la documentación :)"}
 
 @app.post("/webhook")
 async def telegram_webhook(update: dict):
