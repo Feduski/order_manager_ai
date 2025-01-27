@@ -3,10 +3,11 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal, engine, Base
 from typing import List, Optional
 from backend.models import Prenda, Order
-from backend.schemas import OrderCreate, OrderResponse, InventoryUpdate
+from backend.schemas import OrderCreate, OrderResponse
 import logging, openai, json, os
 from fastapi.middleware.cors import CORSMiddleware
 import requests
+from dotenv import load_dotenv
 
 app = FastAPI()
 
@@ -18,13 +19,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,  format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 Base.metadata.create_all(bind=engine)
 
 #variables de entorno
+load_dotenv()
 openai.api_key = os.getenv("OPENAI_KEY")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") 
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 def get_db():
@@ -44,7 +46,8 @@ def parse_user_message(message: str) -> dict:
                     "content": """
                         Sos un asistente que interpreta comandos para gestionar pedidos y stock. 
                         Devolvé un JSON válido con las siguientes claves:
-                        - "intent": "crear_pedido", "consultar_stock", "consultar_pedidos", "pedido_por_id", "actualizar_stock" o "desconocido".
+                        - "intent": "crear_pedido", "consultar_stock", o "desconocido".
+                        - "intent": "crear_pedido", "consultar_stock", "consultar_pedidos", "pedido_por_id" o "desconocido".
                         - "product_id": número (solo si aplica).
                         - "order_id": número (solo si aplica).
                         - "quantity": número (solo si aplica).
@@ -55,34 +58,32 @@ def parse_user_message(message: str) -> dict:
                         
                         - Mensaje: "Consultar stock de id 90"
                         Respuesta: {"intent": "consultar_stock", "product_id": 90}
-
                         - Mensaje: "Mostrame todos los pedidos"
                         Respuesta: {"intent": "consultar_pedidos"}
-
                         - Mensaje: "Mostrame el pedido con id 1"
                         Respuesta: {"intent": "pedido_por_id", "order_id": 1}
-
-                        - Mensaje: "Actualizar stock de item id 23 a 400 unidades"
-                        Respuesta: {"intent": "actualizar_stock", "product_id": 23, "quantity": 400}
-
+                        - Mensaje: "Actualizar stock del producto 1 a 50"
+                        Respuesta: {"intent": "actualizar_stock", "product_id": 1, "quantity": 50}
+                        - Mensaje: "Actualizar el stock disponible del producto id 50 a 300"
+                        Respuesta: {"intent": "actualizar_stock", "product_id": 50, "quantity": 300}
                     """
                 },
                 {"role": "user", "content": message}
             ]
         )
-        
+
         json_str = response.choices[0].message.content.strip()
         parsed_data = json.loads(json_str)
-        
+
         if "intent" not in parsed_data:
             return {"intent": "desconocido"}
-        
+
         return parsed_data
-    
+
     except json.JSONDecodeError:
         logging.error("Respuesta no es un JSON válido")
         return {"intent": "desconocido"}
-    
+
     except Exception as e:
         logging.error(f"Error al parsear mensaje: {e}")
         return {"intent": "desconocido"}
@@ -125,7 +126,9 @@ def parse_response_for_user(info: str) -> dict:
 
                 Ejemplo 4:
                 - Info recibida: {"action": "stock_actualizado", "product_id": 20, "stock": 50}
-                - Respuesta esperada: El stock del producto id 20 fue actualizado a 50 unidades
+                - Respuesta esperada: El stock del producto id 20 fue actualizado a 50 unidades.
+
+                No hace falta que SIEMPRE respondas tan lineal, tomate el lujo de darle un poco de creatividad a cada mensaje.
             """
         },
         {"role": "user", "content": info}
@@ -141,7 +144,7 @@ async def read_root():
 async def docs():
     return {"docs": "Endpoint de la documentación :)"}
 
-@app.post("/webhook")
+@app.post("/telegram_webhook")
 async def telegram_webhook(update: dict):
     try:
         message = update.get("message", {})
@@ -228,16 +231,17 @@ def chat_with_agent(message: str, db: Session = Depends(get_db)):
         
         order = get_order_by_id(order_id, db)
         return {"action": "pedido_consultado", "order": order}
-    
+
     elif parsed_data["intent"] == "actualizar_stock":
         product_id = parsed_data.get("product_id")
         quantity = parsed_data.get("quantity")
+        
         if not product_id or not quantity:
             return {"error": "Faltan parámetros (product_id o quantity)"}
         
-        updated_inventory = update_inventory(product_id, quantity, db)
-        return {"action": "stock_actualizado", "product_id": updated_inventory['product_id'], "stock": updated_inventory["stock"]}
-    
+        updated = update_inventory(product_id, quantity, db)
+        return {"action": "stock_actualizado", "product_id": product_id, "stock": quantity}
+
     else:
         return {"intent": parsed_data["intent"], "parsed_data": parsed_data}
 
@@ -290,11 +294,12 @@ def get_inventory(product_id: Optional[int] = None, db: Session = Depends(get_db
     return [{"product_id": prenda.id, "stock": prenda.cantidad_disponible} for prenda in inventory]
 
 @app.put("/inventory/{product_id}")
-def update_inventory(product_id: int, inventory: InventoryUpdate, db: Session = Depends(get_db)):
+def update_inventory(product_id: int, stock, db: Session = Depends(get_db)):
     prenda = db.query(Prenda).filter(Prenda.id == product_id).first()
-    if prenda is None:
-        raise HTTPException(status_code=404, detail="Product not found")
-    prenda.cantidad_disponible = inventory.stock
+    if not prenda:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    prenda.cantidad_disponible = stock  # Acceder al campo correcto
     db.commit()
     db.refresh(prenda)
     return {"product_id": prenda.id, "stock": prenda.cantidad_disponible}

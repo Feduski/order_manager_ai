@@ -15,6 +15,3 @@ class OrderResponse(BaseModel):
     customer: str
     items: List[Item]
     total_price: float
-
-class InventoryUpdate(BaseModel):
-    stock: int
